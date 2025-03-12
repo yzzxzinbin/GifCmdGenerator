@@ -20,6 +20,7 @@ std::string quality = "";            // 质量参数（默认留空）
 std::string loop_count = "0";        // 循环次数（0=无限）
 std::string command_display;         // 实时显示生成的命令
 std::string error_message;           // 错误提示信息
+std::string result_message;          // 运行结果信息
 std::atomic<float> progress{0};      // 进度条值（0.0 - 1.0）
 std::atomic<bool> is_running{false}; // 是否正在运行
 
@@ -110,15 +111,16 @@ void ExecuteCommand()
     if (!error_message.empty())
         return;
 
-    // 重置进度
+    // 重置进度和结果信息
     progress = 0;
+    result_message.clear();
     is_running = true;
 
     // 启动ffmpeg进程
-    FILE *pipe = popen(command_display.c_str(), "r");
+    FILE *pipe = popen((command_display + " 2>&1").c_str(), "r"); // 捕获标准错误
     if (!pipe)
     {
-        error_message = "无法启动ffmpeg进程";
+        result_message = "错误：无法启动ffmpeg进程";
         is_running = false;
         return;
     }
@@ -148,14 +150,27 @@ void ExecuteCommand()
             float total_duration = 600; // 10分钟
             progress = total_seconds / total_duration;
         }
+
+        // 捕获错误信息
+        if (line.find("Error") != std::string::npos || line.find("failed") != std::string::npos)
+        {
+            result_message += line;
+        }
     }
 
     // 关闭管道
     pclose(pipe);
     is_running = false;
 
-    // 更新命令显示
-    command_display += "\n>> 完成！";
+    // 更新结果信息
+    if (result_message.empty())
+    {
+        result_message = "成功：GIF已生成！";
+    }
+    else
+    {
+        result_message = "失败：\n" + result_message;
+    }
 }
 
 int main()
@@ -226,6 +241,21 @@ int main()
             display_elements.push_back(separator());
         }
 
+        // 运行结果显示
+        if (!result_message.empty()) {
+            ftxui::Color result_color;
+            if (is_running) {
+                result_color = ftxui::Color::Default;
+            } else {
+                if (result_message.find("成功") != std::string::npos) {
+                    result_color = ftxui::Color::Green;
+                } else {
+                    result_color = ftxui::Color::Red;
+                }
+            }
+            display_elements.push_back(text(result_message) | color(result_color));
+            display_elements.push_back(separator());
+        }
         // 按钮布局
         auto buttons = hbox({
             execute_button->Render() | border | color(Color::Green),
