@@ -5,7 +5,8 @@
 #include <atomic>
 #include <regex>
 #include <filesystem>
-#include <fstream> // 新增：用于文件操作
+#include <chrono>
+#include <fstream>
 #include <ftxui/screen/screen.hpp>
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/component/component.hpp>
@@ -29,6 +30,14 @@ std::atomic<bool> is_running{false}; // 是否正在运行
 
 const std::string log_file_path = "ffmpeg.log"; // 日志文件路径
 std::map<std::string, std::string> fileMap;     // 存储文件名和数字部分的映射
+
+bool isValidNumber(const std::string &s, int &value);
+std::string extractNumberFromFilename(const std::string &filename);
+void ConstructMap();
+void GenerateCommand();
+void ExecuteCommand();
+
+// ---------------------------------------------------
 // 检查字符串是否为有效整数
 bool isValidNumber(const std::string &s, int &value)
 {
@@ -70,8 +79,10 @@ std::string extractNumberFromFilename(const std::string &filename)
 }
 
 // 重命名文件函数
-void RenameFiles()
+void ConstructMap()
 {
+    // 清空文件映射
+    fileMap.clear();
 
     // 遍历目录中的文件
     for (const auto &entry : fs::directory_iterator("."))
@@ -86,23 +97,6 @@ void RenameFiles()
                 fileMap[number] = filename;
             }
         }
-    }
-
-    // 按照数字部分排序
-    std::vector<std::pair<std::string, std::string>> sortedFiles(fileMap.begin(), fileMap.end());
-    std::sort(sortedFiles.begin(), sortedFiles.end(), [](const auto &a, const auto &b)
-              { return std::stoi(a.first) < std::stoi(b.first); });
-
-    // 重命名文件
-    int counter = 1;
-    for (const auto &[number, filename] : sortedFiles)
-    {
-        std::ostringstream newFilenameStream;
-        newFilenameStream << "image_" << std::setw(3) << std::setfill('0') << counter << "." << extension;
-        std::string newFilename = newFilenameStream.str();
-
-        fs::rename(filename, newFilename);
-        counter++;
     }
 }
 
@@ -158,8 +152,21 @@ void GenerateCommand()
     command_display.clear();
     if (error_message.empty())
     {
+        // 按照数字部分排序
+        std::vector<std::pair<std::string, std::string>> sortedFiles(fileMap.begin(), fileMap.end());
+        std::sort(sortedFiles.begin(), sortedFiles.end(), [](const auto &a, const auto &b)
+                  { return std::stoi(a.first) < std::stoi(b.first); });
+
+        // 构建文件列表
+        std::ostringstream fileListStream;
+        for (const auto &[number, filename] : sortedFiles)
+        {
+            fileListStream << " -i \"" << filename << "\"";
+        }
+
+        // 生成ffmpeg命令
         command_display = "ffmpeg -hide_banner -loglevel info -framerate " + framerate +
-                          " -i image_%03d." + extension +
+                          fileListStream.str() +
                           " -vf \"scale=" + width + ":-1\"";
 
         // 添加质量参数
@@ -176,6 +183,12 @@ void GenerateCommand()
 // 执行命令并捕获进度
 void ExecuteCommand()
 {
+    char buffer[64];
+    int last_frame = 0;                // 上一次的帧数
+    int current_frame = 0;             // 当前的帧数
+    int total_frames = fileMap.size(); // 总帧数
+    const float smooth_step = 0.01f;   // 每次增加的进度步长
+
     if (!error_message.empty())
         return;
 
@@ -183,15 +196,6 @@ void ExecuteCommand()
     progress = 0;
     result_message.clear();
     is_running = true;
-
-    // 启动ffmpeg进程
-    FILE *pipe = popen((command_display + " 2>&1").c_str(), "r"); // 捕获标准错误
-    if (!pipe)
-    {
-        result_message = "错误：无法启动ffmpeg进程";
-        is_running = false;
-        return;
-    }
 
     // 打开日志文件
     std::ofstream log_file(log_file_path);
@@ -202,29 +206,47 @@ void ExecuteCommand()
         return;
     }
 
-    // 正则表达式解析 frame 和 time
-    std::regex frame_regex(R"(frame=\s*(\d+).*time=(\d+):(\d+):(\d+\.\d+))");
+    // 启动ffmpeg进程
+    FILE *pipe = popen((command_display + " 2>&1").c_str(), "r"); // 捕获标准错误
+    if (!pipe)
+    {
+        result_message = "错误：无法启动ffmpeg进程";
+        is_running = false;
+        return;
+    }
+
+    // 正则表达式解析 frame
+    std::regex frame_regex(R"(frame=\s*(\d+))");
     std::smatch matches;
     std::string line;
 
     // 读取ffmpeg输出
-    char buffer[128];
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
     {
         line = buffer;
         log_file << line; // 将输出写入日志文件
 
-        // 解析 frame 和 time
+        // 解析 frame
         if (std::regex_search(line, matches, frame_regex))
         {
-            int current_frame = std::stoi(matches[1]); // 当前帧数
-            int total_frames = fileMap.size();         // 总帧数
+            current_frame = std::stoi(matches[1]); // 更新当前帧数
+        }
 
-            // 计算进度
-            progress = static_cast<float>(current_frame) / total_frames;
+        // 平滑插值更新进度
+        float target_progress = static_cast<float>(current_frame) / total_frames;
+        while (progress < target_progress)
+        {
+            progress = progress + smooth_step; // 逐步增加进度
+            if (progress > target_progress)
+            {
+                progress = target_progress;
+            }
 
             // 主动触发界面刷新
             ScreenInteractive::Active()->PostEvent(Event::Custom);
+
+            // 稍微延迟一下，避免进度条更新过快
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
 
         // 捕获错误信息
@@ -265,7 +287,7 @@ int main()
     // 定义按钮组件
     Component execute_button = Button("生成GIF", []
                                       {
-        RenameFiles(); // 先重命名文件
+        ConstructMap(); // 构建文件映射
         GenerateCommand();
         if (error_message.empty()) {
             std::thread(ExecuteCommand).detach(); // 异步执行

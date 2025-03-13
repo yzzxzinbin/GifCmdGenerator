@@ -38,7 +38,7 @@ std::string extractNumberFromFilename(const std::string &filename)
 int main()
 {
     std::string directory = ".";                // 当前目录
-    std::string extension = ".png";             // 文件后缀
+    std::string extension = ".jpg";             // 文件后缀
     std::map<std::string, std::string> fileMap; // 存储文件名和数字部分的映射
 
     // 遍历目录中的文件
@@ -67,7 +67,7 @@ int main()
     {
         // 使用 std::setw 和 std::setfill 补位
         std::ostringstream newFilenameStream;
-        newFilenameStream << "image_" << std::setw(3) << std::setfill('0') << counter << extension;
+        newFilenameStream << "image_" << std::setw(5) << std::setfill('0') << counter << extension;
         std::string newFilename = newFilenameStream.str();
 
         fs::rename(filename, newFilename);
