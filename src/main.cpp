@@ -81,6 +81,15 @@ std::string extractNumberFromFilename(const std::string &filename)
 // 重命名文件函数
 void RenameFiles()
 {
+    fileMap.clear(); // 清空 fileMap，避免重复填充
+
+    // 打开日志文件
+    std::ofstream log_file("rename_log.txt");
+    if (!log_file.is_open())
+    {
+        error_message = "错误：无法创建日志文件";
+        return;
+    }
 
     // 遍历目录中的文件
     for (const auto &entry : fs::directory_iterator("."))
@@ -92,7 +101,8 @@ void RenameFiles()
 
             if (!number.empty())
             {
-                fileMap[number] = filename;
+                fileMap[number] = filename;                                          // 确保映射关系正确
+                log_file << "Mapped: " << number << " -> " << filename << std::endl; // 输出到日志
             }
         }
     }
@@ -111,8 +121,11 @@ void RenameFiles()
         std::string newFilename = newFilenameStream.str();
 
         fs::rename(filename, newFilename);
+        log_file << "Renamed: " << filename << " -> " << newFilename << std::endl; // 输出到日志
         counter++;
     }
+
+    log_file.close(); // 关闭日志文件
 }
 
 // 生成FFmpeg命令的函数
@@ -180,6 +193,71 @@ void GenerateCommand()
         // 添加循环参数
         command_display += " -loop " + loop_count + " -y " + output_path; // 添加 -y 参数
     }
+}
+
+// 执行命令并捕获进度
+// 恢复原始文件名
+void RestoreOriginalFilenames()
+{
+    // 打开日志文件
+    std::ofstream log_file("restore_log.txt");
+    if (!log_file.is_open())
+    {
+        error_message = "错误：无法创建日志文件";
+        return;
+    }
+
+    // 遍历从 1 到 fileMap.size() 的序号
+    for (int i = 1; i <= fileMap.size(); i++)
+    {
+        // 构造临时文件名
+        std::ostringstream newFilenameStream;
+        newFilenameStream << "image_" << std::setw(3) << std::setfill('0') << i << "." << extension;
+        std::string newFilename = newFilenameStream.str();
+
+        // 检查源文件是否存在
+        if (!fs::exists(newFilename))
+        {
+            log_file << "Error: Source file not found: " << newFilename << std::endl;
+            continue;
+        }
+
+        // 找到对应的原始文件名
+        auto it = std::next(fileMap.begin(), i - 1); // 获取第 i 个键值对
+        std::string originalFilename = it->second;
+
+        log_file << "Processing: " << newFilename << " -> " << originalFilename << std::endl;
+
+        // 检查目标文件是否存在
+        if (fs::exists(originalFilename))
+        {
+            log_file << "Warning: Target file already exists: " << originalFilename << std::endl;
+
+            // 如果目标文件已存在，先删除它
+            if (fs::remove(originalFilename))
+            {
+                log_file << "Deleted existing target file: " << originalFilename << std::endl;
+            }
+            else
+            {
+                log_file << "Error: Failed to delete existing target file: " << originalFilename << std::endl;
+                continue;
+            }
+        }
+
+        // 恢复原始文件名
+        try
+        {
+            fs::rename(newFilename, originalFilename);
+            log_file << "Restored: " << newFilename << " -> " << originalFilename << std::endl;
+        }
+        catch (const std::exception &e)
+        {
+            log_file << "Error: Failed to restore: " << newFilename << " -> " << originalFilename << std::endl;
+        }
+    }
+
+    log_file.close(); // 关闭日志文件
 }
 
 // 执行命令并捕获进度
@@ -272,6 +350,9 @@ void ExecuteCommand()
     {
         result_message = "失败：\n" + result_message;
     }
+
+    // 恢复原始文件名
+    RestoreOriginalFilenames();
 
     // 最后一次刷新界面
     ScreenInteractive::Active()->PostEvent(Event::Custom);
