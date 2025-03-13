@@ -33,7 +33,7 @@ std::map<std::string, std::string> fileMap;     // 存储文件名和数字部�
 
 bool isValidNumber(const std::string &s, int &value);
 std::string extractNumberFromFilename(const std::string &filename);
-void ConstructMap();
+void RenameFiles();
 void GenerateCommand();
 void ExecuteCommand();
 
@@ -79,10 +79,8 @@ std::string extractNumberFromFilename(const std::string &filename)
 }
 
 // 重命名文件函数
-void ConstructMap()
+void RenameFiles()
 {
-    // 清空文件映射
-    fileMap.clear();
 
     // 遍历目录中的文件
     for (const auto &entry : fs::directory_iterator("."))
@@ -97,6 +95,23 @@ void ConstructMap()
                 fileMap[number] = filename;
             }
         }
+    }
+
+    // 按照数字部分排序
+    std::vector<std::pair<std::string, std::string>> sortedFiles(fileMap.begin(), fileMap.end());
+    std::sort(sortedFiles.begin(), sortedFiles.end(), [](const auto &a, const auto &b)
+              { return std::stoi(a.first) < std::stoi(b.first); });
+
+    // 重命名文件
+    int counter = 1;
+    for (const auto &[number, filename] : sortedFiles)
+    {
+        std::ostringstream newFilenameStream;
+        newFilenameStream << "image_" << std::setw(3) << std::setfill('0') << counter << "." << extension;
+        std::string newFilename = newFilenameStream.str();
+
+        fs::rename(filename, newFilename);
+        counter++;
     }
 }
 
@@ -152,21 +167,8 @@ void GenerateCommand()
     command_display.clear();
     if (error_message.empty())
     {
-        // 按照数字部分排序
-        std::vector<std::pair<std::string, std::string>> sortedFiles(fileMap.begin(), fileMap.end());
-        std::sort(sortedFiles.begin(), sortedFiles.end(), [](const auto &a, const auto &b)
-                  { return std::stoi(a.first) < std::stoi(b.first); });
-
-        // 构建文件列表
-        std::ostringstream fileListStream;
-        for (const auto &[number, filename] : sortedFiles)
-        {
-            fileListStream << " -i \"" << filename << "\"";
-        }
-
-        // 生成ffmpeg命令
         command_display = "ffmpeg -hide_banner -loglevel info -framerate " + framerate +
-                          fileListStream.str() +
+                          " -i image_%03d." + extension +
                           " -vf \"scale=" + width + ":-1\"";
 
         // 添加质量参数
@@ -287,7 +289,7 @@ int main()
     // 定义按钮组件
     Component execute_button = Button("生成GIF", []
                                       {
-        ConstructMap(); // 构建文件映射
+        RenameFiles(); // 先重命名文件
         GenerateCommand();
         if (error_message.empty()) {
             std::thread(ExecuteCommand).detach(); // 异步执行
