@@ -202,27 +202,29 @@ void ExecuteCommand()
         return;
     }
 
-    // 正则表达式解析时间
-    std::regex time_regex(R"(time=(\d+):(\d+):(\d+\.\d+))");
     // 正则表达式解析 frame 和 time
     std::regex frame_regex(R"(frame=\s*(\d+).*time=(\d+):(\d+):(\d+\.\d+))");
     std::smatch matches;
     std::string line;
 
     // 读取ffmpeg输出
-    char buffer[64];
+    char buffer[128];
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
     {
         line = buffer;
         log_file << line; // 将输出写入日志文件
 
+        // 解析 frame 和 time
         if (std::regex_search(line, matches, frame_regex))
         {
             int current_frame = std::stoi(matches[1]); // 当前帧数
-            // 计算总帧数（假设 map.size() 为总帧数）
-            int total_frames = fileMap.size();
+            int total_frames = fileMap.size();         // 总帧数
+
             // 计算进度
             progress = static_cast<float>(current_frame) / total_frames;
+
+            // 主动触发界面刷新
+            ScreenInteractive::Active()->PostEvent(Event::Custom);
         }
 
         // 捕获错误信息
@@ -246,8 +248,10 @@ void ExecuteCommand()
     {
         result_message = "失败：\n" + result_message;
     }
-}
 
+    // 最后一次刷新界面
+    ScreenInteractive::Active()->PostEvent(Event::Custom);
+}
 int main()
 {
     // 定义输入组件
