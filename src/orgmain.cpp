@@ -5,7 +5,7 @@
 #include <atomic>
 #include <regex>
 #include <filesystem>
-#include <fstream> // 新增：用于文件操作
+#include <map>
 #include <ftxui/screen/screen.hpp>
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/component/component.hpp>
@@ -26,9 +26,8 @@ std::string error_message;           // 错误提示信息
 std::string result_message;          // 运行结果信息
 std::atomic<float> progress{0};      // 进度条值（0.0 - 1.0）
 std::atomic<bool> is_running{false}; // 是否正在运行
+std::map<std::string, std::string> fileMap; // 存储文件名和数字部分的映射
 
-const std::string log_file_path = "ffmpeg.log"; // 日志文件路径
-std::map<std::string, std::string> fileMap;     // 存储文件名和数字部分的映射
 // 检查字符串是否为有效整数
 bool isValidNumber(const std::string &s, int &value)
 {
@@ -72,7 +71,6 @@ std::string extractNumberFromFilename(const std::string &filename)
 // 重命名文件函数
 void RenameFiles()
 {
-
     // 遍历目录中的文件
     for (const auto &entry : fs::directory_iterator("."))
     {
@@ -102,6 +100,7 @@ void RenameFiles()
         std::string newFilename = newFilenameStream.str();
 
         fs::rename(filename, newFilename);
+        fileMap[std::to_string(counter)] = newFilename; // 更新 fileMap
         counter++;
     }
 }
@@ -193,36 +192,31 @@ void ExecuteCommand()
         return;
     }
 
-    // 打开日志文件
-    std::ofstream log_file(log_file_path);
-    if (!log_file.is_open())
-    {
-        result_message = "错误：无法创建日志文件";
-        is_running = false;
-        return;
-    }
-
-    // 正则表达式解析时间
-    std::regex time_regex(R"(time=(\d+):(\d+):(\d+\.\d+))");
-    // 正则表达式解析 frame 和 time
+    // 正则表达式解析当前处理的帧号和时间
     std::regex frame_regex(R"(frame=\s*(\d+).*time=(\d+):(\d+):(\d+\.\d+))");
     std::smatch matches;
     std::string line;
 
     // 读取ffmpeg输出
-    char buffer[64];
+    char buffer[128];
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
     {
         line = buffer;
-        log_file << line; // 将输出写入日志文件
 
+        // 解析当前处理的帧号和时间
         if (std::regex_search(line, matches, frame_regex))
         {
-            int current_frame = std::stoi(matches[1]); // 当前帧数
-            // 计算总帧数（假设 map.size() 为总帧数）
-            int total_frames = fileMap.size();
-            // 计算进度
-            progress = static_cast<float>(current_frame) / total_frames;
+            int currentFrame = std::stoi(matches[1]); // 当前帧号
+            int hours = std::stoi(matches[2]);       // 小时
+            int minutes = std::stoi(matches[3]);     // 分钟
+            float seconds = std::stof(matches[4]);   // 秒
+
+            // 计算当前时间（秒）
+            float currentTime = hours * 3600 + minutes * 60 + seconds;
+
+            // 假设总时长为10分钟（可以根据实际情况调整）
+            float totalDuration = 600; // 10分钟
+            progress = currentTime / totalDuration;
         }
 
         // 捕获错误信息
@@ -232,9 +226,8 @@ void ExecuteCommand()
         }
     }
 
-    // 关闭管道和日志文件
+    // 关闭管道
     pclose(pipe);
-    log_file.close();
     is_running = false;
 
     // 更新结果信息
@@ -289,10 +282,10 @@ int main()
         GenerateCommand(); // 实时更新命令和错误信息
 
         Elements display_elements;
-        display_elements.push_back(hbox(text(" 输出文件路径:  "), output_path_input->Render()));
+        display_elements.push_back(hbox(text(" 输出文件路径: "), output_path_input->Render()));
         display_elements.push_back(hbox(text(" 帧率 (fps):    "), framerate_input->Render()));
         display_elements.push_back(hbox(text(" 宽度 (px):     "), width_input->Render()));
-        display_elements.push_back(hbox(text(" 质量 (1-31):   "), quality_input->Render()));
+        display_elements.push_back(hbox(text(" 质量 (1-31):  "), quality_input->Render()));
         display_elements.push_back(hbox(text(" 循环次数:      "), loop_input->Render()));
         display_elements.push_back(hbox(text(" 文件后缀名:    "), extension_input->Render()));
         display_elements.push_back(separator());
