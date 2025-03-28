@@ -1,4 +1,5 @@
 > 使用FTXUI作为终端显示界面，通过TUI调整配置选项，生成合并图片文件为gif的命令并调用ffmpeg执行
+
 > Using FTXUI as the terminal display interface, adjust configuration options through TUI, generate a command to merge image files into a gif, and call ffmpeg to execute.
 
 #### 功能
